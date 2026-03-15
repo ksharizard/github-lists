@@ -10,7 +10,7 @@ fi
 echo "Fetching lists for $username..."
 # 1. Get the HTML and extract the list names
 # Using -L to follow redirects and a User-Agent to ensure standard HTML
-list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "ksharizard/lists")
+list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "$username/lists")
 
 mapfile -t lists < <(echo "$list_links" | awk -F'[/"]' '{print $(NF-1)}' | sort -u)
 
