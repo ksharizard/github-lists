@@ -1,73 +1,38 @@
 #!/bin/bash
 
-read -p "Enter GitHub username: " username
+trap 'echo -e "\n\nInterrupted by user." >&2; exit 130' INT
 
-if [[ -z "$username" ]]; then
-    echo "Username cannot be empty."
-    exit 1
-fi
-
-echo "Fetching lists for $username..."
-# 1. Get the HTML and extract the list names
-# Using -L to follow redirects and a User-Agent to ensure standard HTML
-list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "$username/lists")
-
-mapfile -t lists < <(echo "$list_links" | awk -F'[/"]' '{print $(NF-1)}' | sort -u)
-
-if [ ${#lists[@]} -eq 0 ]; then
-    echo "No lists found for user: $username"
-    exit 1
-fi
-
-# 2. Ask the user to select a list
-echo ""
-echo "Please select a list to query:"
-select list_name in "${lists[@]}"; do
-    if [ -n "$list_name" ]; then
-        echo "You selected: $list_name"
-        break
+get_private_lists_option() {
+    local private_option
+    read -p "Do you want to fetch private lists? (y/n): " private_option
+    if [[ $private_option =~ ^[Yy]$ ]]; then
+        echo "$private_option"
     else
-        echo "Invalid selection. Please try again."
+        echo "Please answer 'y' or 'n'."
+        exit 1
     fi
-done
+}
 
-# 3. Paginate through the selected list
-page=1
-all_repos=()
 
-echo "Starting query for list: $list_name"
-echo "-----------------------------------"
+main() {
+    while getopts ":u:" opt; do
+        case $opt in
+            u) username="$OPTARG" ;;
+            *) echo "Usage: $0 -f <file> -o <output>"; exit 1 ;;
+        esac
+    done
 
-while true; do
-    echo "Fetching page $page..."
-    page_source=$(curl -sL -A "Mozilla/5.0" "https://github.com/stars/$username/lists/$list_name?page=$page")
-
-    # Extract repo links.
-    # We look for links in the format /user/repo inside <h3> tags
-    # We exclude common links like /stars, /settings, /orgs, etc.
-    current_page_repos=$(echo "$page_source" | \
-        grep -oP 'href="/[^/"]+/[^/"]+"' | \
-        sed 's/href="//;s/"//' | \
-        grep -vE "^/(stars|site|settings|orgs|contact|about|customer-stories|topics|collections|trending|events|marketplace|pricing|exploring|features|security|login|join|notifications|search|dashboard)/" | \
-        sed 's|^/|https://github.com/|' | \
-        sort -u)
-
-    # If no repos are found on this page, stop the loop
-    if [[ -z "$current_page_repos" ]]; then
-        echo "No more projects found. Reached the end."
-        break
+    if [[ ! -n $username ]]; then
+        username=$(./helper/get-username.sh)
     fi
+    private_option=$(get_private_lists_option)
 
-    # Display found repos for this page
-    echo "Found on page $page:"
-    echo "$current_page_repos"
-    echo "-----------------------------------"
-
-    # Increment page number
-    ((page++))
-
-    # Optional: Brief sleep to avoid hitting rate limits
-    sleep 1
-done
-
-echo "Finished querying $list_name."
+    if [[ $private_option == "y" ]]; then
+        ./helper/get-cookie.sh
+        list_links=$(curl -sL -A "Mozilla/5.0" -H @cookie.txt "https://github.com/$username?tab=stars" | grep "$username/lists/")
+    else
+        list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "$username/lists/")
+    fi
+    echo "$list_links" | awk -F'[/"]' '{print $(NF-1)}' | sort -u
+}
+main "$@"
