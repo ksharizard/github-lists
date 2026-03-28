@@ -1,32 +1,22 @@
 #!/bin/bash
 
-trap 'echo -e "\n\nInterrupted by user." >&2; exit 130' INT
+all_stars_file=$(mktemp)
+in_lists_file=$(mktemp)
+COOKIE_FILE="cookie.txt"
 
-check_gh() {
-    if ! command -v gh &> /dev/null; then
-        echo "Error: 'gh' is not installed."
-        exit 1
-    fi
+trap 'rm "$all_stars_file" "$in_lists_file"' EXIT
+
+error() {
+    echo -e "\033[31m$1\033[0m"
 }
 
-fetch_stars() {
-    echo "Fetching ALL stars"
-    gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
-    echo -e "\nFound $(wc -l < "$all_stars_file") total stars."
+success() {
+    echo -e "\033[32m$1\033[0m"
 }
 
-
-fetch_all_lists(){
-    # echo "Finding your GitHub Lists..."
-    mapfile -t lists < <(./fetch-lists.sh -u $username)
-    sleep 1
-    if [ ${#lists[@]} -eq 0 ]; then
-        echo "No lists found."
-    else
-        echo "Found ${#lists[@]} lists: ${lists[*]}"
-    fi
+info() {
+    echo -e "\033[34m$1\033[0m"
 }
-
 
 extract_from_html() {
     grep -oP 'href="/[^/"]+/[^/"]+"' | \
@@ -35,54 +25,100 @@ extract_from_html() {
 }
 
 
-fetch_all_list_stars() {
-    for list_name in "${lists[@]}"; do
-        page=1
-        while true; do
-            echo -ne "\nScraping list [$list_name] page $page...\r"
-            url="https://github.com/stars/$username/lists/$list_name?page=$page"
-            content=$(curl -sL -A "Mozilla/5.0" "$url")
-            repos=$(echo "$content" | extract_from_html)
-
-            if [[ -z "$repos" ]]; then break; fi
-
-            echo "$repos" >> "$in_lists_file"
-            ((page++))
-            sleep 1
-        done
-    done
-}
+# Check for gh
+if ! command -v gh &> /dev/null; then
+    error "Error: 'gh' is not installed."
+    exit 1
+fi
 
 
-main() {
-    username=$(./helper/get-username.sh)
+# Get username
+read -p "Enter GitHub username: " username
+if [[ -z "$username" ]]; then
+    error "Username cannot be empty."
+    exit 1
+fi
 
-    all_stars_file=$(mktemp)
-    in_lists_file=$(mktemp)
 
-    check_gh
-    fetch_stars
+# Get private lists option
+read -p "Do you want to fetch private lists? (y/n): " private_option
+if [[ ! $private_option =~ ^[yn]$ ]]; then
+    error "Please answer 'y' or 'n'."
+    exit 1
+fi
 
-    fetch_all_lists
-    fetch_all_list_stars
 
-    sort -u "$all_stars_file" -o "$all_stars_file"
-    sort -u "$in_lists_file" -o "$in_lists_file"
-
-    echo "----------------------------------"
-    echo "REPOS STARRED BUT NOT IN ANY LIST:"
-    echo "----------------------------------"
-
-    # Show items in 'all_stars' that are NOT in 'in_lists'
-    results=$(comm -23 "$all_stars_file" "$in_lists_file" | sed 's|^|https://github.com/|')
-
-    if [[ -z "$results" ]]; then
-        echo "Everything is organized! No unlisted stars found."
+# Get cookie
+if [[ $private_option == "y" ]]; then
+    if [[ -s "cookie.txt" ]]; then
+        info "Existing 'cookie.txt' found. Reading cookie from file."
     else
-        echo "$results"
-    fi
+        echo "Check README for cookie instructions."
+        read -p "Please paste your full GitHub 'Cookie' header string here: " cookie
 
-    # Cleanup
-    rm "$all_stars_file" "$in_lists_file"
-}
-main "$@"
+        if [[ -z "$cookie" ]]; then
+            error "Error: No cookie string entered. Exiting."
+            exit 1
+        fi
+
+        echo "Cookie: $cookie" > cookie.txt
+        chmod 600 cookie.txt # Set secure permissions (only owner can read/write)
+
+        success "Cookie saved."
+    fi
+fi
+
+
+info "Fetching ALL stars (Takes some time if a lot of stars)"
+gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
+success "Found $(wc -l < "$all_stars_file") total stars."
+
+
+info "Finding your GitHub Lists"
+if [[ $private_option == "y" ]]; then
+    list_links=$(curl -sL -A "Mozilla/5.0" -H @cookie.txt "https://github.com/$username?tab=stars" | grep "$username/lists/")
+else
+    list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "$username/lists/")
+fi
+mapfile -t lists < <(echo "$list_links" | awk -F'[/"]' '{print $(NF-1)}' | sort -u)
+if [ ${#lists[@]} -eq 0 ]; then
+    error "No lists found."
+else
+    success "Found ${#lists[@]} lists: ${lists[*]}"
+fi
+
+
+for list_name in "${lists[@]}"; do
+    page=1
+    info "\nScraping list [$list_name]"
+    while true; do
+        echo -ne "page $page\r"
+        url="https://github.com/stars/$username/lists/$list_name?page=$page"
+        content=$(curl -sL -A "Mozilla/5.0" "$url")
+        repos=$(echo "$content" | extract_from_html)
+
+        if [[ -z "$repos" ]]; then break; fi
+
+        echo "$repos" >> "$in_lists_file"
+        ((page++))
+        sleep 1
+    done
+done
+
+
+sort -u "$all_stars_file" -o "$all_stars_file"
+sort -u "$in_lists_file" -o "$in_lists_file"
+
+echo "----------------------------------"
+echo "REPOS STARRED BUT NOT IN ANY LIST:"
+echo "----------------------------------"
+
+# Show items in 'all_stars' that are NOT in 'in_lists'
+results=$(comm -23 "$all_stars_file" "$in_lists_file" | sed 's|^|https://github.com/|')
+
+if [[ -z "$results" ]]; then
+    echo "Everything is organized! No unlisted stars found."
+else
+    echo "$results"
+fi
+
