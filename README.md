@@ -1,9 +1,18 @@
 # github-lists
-Scripts that provide utilities to organise your Github lists
+Script that provide utilities to organise and interact with your GitHub lists.
 
-## Scripts
-### unlisted-stars.sh
-- It goes through a user's stars (through API) and their lists (through web scraping) and compares them to find stars which are not in lists.
+## Requirements
+- `github-cli`: Gets user's stars
 
-### list-fetcher.sh
-- Retrieves lists of a user and allows to see the repos in them
+## Features
+- **Fetch lists**: Retrieves lists (public and private) of a user and shows the stars in the lists.
+- **Fetch unlisted stars**: Goes through a user's stars and lists' stars, then compares them to find stars which are not in any list.
+
+## Cookie
+1) Open github.com (Be logged in)
+2) Open **Web Developer Tools** (Press F12)
+3) Open **Network** and reload GitHub
+4) Select a GET request (HTML type works most of the time)
+5) In the headers, scroll down to the Request Headers and find the Cookie header
+6) Right click on it and "Copy Value"
+
