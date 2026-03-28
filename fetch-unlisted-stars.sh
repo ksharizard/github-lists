@@ -2,34 +2,16 @@
 
 trap 'echo -e "\n\nInterrupted by user." >&2; exit 130' INT
 
-check_jq() {
-    if ! command -v jq &> /dev/null; then
-        echo "Error: 'jq' is not installed."
+check_gh() {
+    if ! command -v gh &> /dev/null; then
+        echo "Error: 'gh' is not installed."
         exit 1
     fi
 }
 
 fetch_stars() {
     echo "Fetching ALL stars"
-    page=1
-    while true; do
-        echo -ne "Fetching page $page...\r"
-
-        response=$(curl -sH "Accept: application/vnd.github.v3.star+json" \
-            "https://api.github.com/users/$username/starred?page=$page&per_page=100")
-
-        count=$(echo "$response" | jq '. | length' 2>/dev/null)
-
-        # If count is 0, we've reached the end
-        if [[ "$count" -le 0 ]] || [[ -z "$count" ]]; then
-            break
-        fi
-
-        echo "$response" | jq -r '.[].repo.full_name' >> "$all_stars_file"
-
-        ((page++))
-        sleep 0.2
-    done
+    gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
     echo -e "\nFound $(wc -l < "$all_stars_file") total stars."
 }
 
@@ -37,6 +19,7 @@ fetch_stars() {
 fetch_all_lists(){
     # echo "Finding your GitHub Lists..."
     mapfile -t lists < <(./fetch-lists.sh -u $username)
+    sleep 1
     if [ ${#lists[@]} -eq 0 ]; then
         echo "No lists found."
     else
@@ -56,7 +39,7 @@ fetch_all_list_stars() {
     for list_name in "${lists[@]}"; do
         page=1
         while true; do
-            echo -ne "Scraping list [$list_name] page $page...\r"
+            echo -ne "\nScraping list [$list_name] page $page...\r"
             url="https://github.com/stars/$username/lists/$list_name?page=$page"
             content=$(curl -sL -A "Mozilla/5.0" "$url")
             repos=$(echo "$content" | extract_from_html)
@@ -77,7 +60,7 @@ main() {
     all_stars_file=$(mktemp)
     in_lists_file=$(mktemp)
 
-    check_jq
+    check_gh
     fetch_stars
 
     fetch_all_lists
