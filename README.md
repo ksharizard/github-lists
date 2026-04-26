@@ -9,10 +9,17 @@ Script that provide utilities to organise and interact with your GitHub lists.
 - **Fetch unlisted stars**: Goes through a user's stars and lists' stars, then compares them to find stars which are not in any list.
 
 ## Cookie
+### Recommended method
+1) Open github.com (Be logged in)
+2) Open **Web Developer Tools** (Press F12)
+3) Open **Storage** (Firefox) / **Application** (Chromium)
+4) Expand the **Cookies** tab and click on ``https://github.com``
+5) Find **user_session** and copy the **Value**
+
+### Alternative method
 1) Open github.com (Be logged in)
 2) Open **Web Developer Tools** (Press F12)
 3) Open **Network** and reload GitHub
 4) Select a GET request (HTML type works most of the time)
 5) In the headers, scroll down to the Request Headers and find the Cookie header
 6) Right click on it and "Copy Value"
-
