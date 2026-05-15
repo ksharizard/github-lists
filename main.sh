@@ -149,7 +149,10 @@ for list_name in "${selected_lists[@]}"; do
 
         if [[ -z "$repos" ]]; then break; fi
 
-        echo "$repos" >> "$in_lists_file"
+        echo "$repos" | while read -r repo; do
+            [[ -n "$repo" ]] && echo "${list_name}:::${repo}"
+        done >> "$in_lists_file"
+
         ((page++))
         sleep 1
     done
@@ -157,12 +160,30 @@ done
 
 
 if [[ $option == 1 ]]; then
-    cat $in_lists_file
+    if [[ -s "$in_lists_file" ]]; then
+        declare -A seen_lists
+        declare -a list_order
+
+        while IFS=':::' read -r list_name repo; do
+            if [[ -z "${seen_lists[$list_name]}" ]]; then
+                list_order+=("$list_name")
+                seen_lists[$list_name]=1
+            fi
+        done < "$in_lists_file"
+
+        # Output grouped by list
+        for list_name in "${list_order[@]}"; do
+            info "\n[$list_name]"
+            grep "^${list_name}:::" "$in_lists_file" | cut -d':' -f4- | sed 's|^|https://github.com/|'
+        done
+    else
+        echo "No repositories found in selected lists."
+    fi
 fi
 
 if [[ $option == 2 ]]; then
     sort -u "$all_stars_file" -o "$all_stars_file"
-    sort -u "$in_lists_file" -o "$in_lists_file"
+    cut -d':' -f4- "$in_lists_file" | sort -u -o "$in_lists_file"
 
     echo "----------------------------------"
     echo "REPOS STARRED BUT NOT IN ANY LIST:"
