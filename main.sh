@@ -11,33 +11,6 @@ info() { echo -e "\033[34m$1\033[0m"; }
 success() { echo -e "\033[32m$1\033[0m"; }
 warn() { echo -e "\033[33m$1\033[0m"; }
 
-select_multiple_lists() {
-    local selected=()
-    local input
-
-    read -p "Enter your selection: " input
-
-    if [[ "$input" == "all" ]]; then
-        selected=("${lists[@]}")
-    else
-        # Parse space-separated numbers
-        for num in $input; do
-            if [[ $num -ge 1 && $num -le ${#lists[@]} ]]; then
-                selected+=("${lists[$((num - 1))]}")
-            else
-                echo "Invalid selection: $num"
-            fi
-        done
-    fi
-
-    if [[ ${#selected[@]} -eq 0 ]]; then
-        echo "No valid selections made."
-        return 1
-    fi
-
-    echo "${selected[@]}"
-}
-
 # Ask for cookie
 prompt_for_cookie() {
     echo "Check README for cookie instructions."
@@ -86,13 +59,6 @@ if ! command -v gh &> /dev/null; then
     exit 1
 fi
 
-
-# Get program selection
-read -p "Enter 1 for getting stars in lists or 2 for unlisted stars: " option
-if [[ ! $option =~ ^[12]$ ]]; then
-    error "Please choose 1 or 2."
-    exit 1
-fi
 
 # Get username
 read -p "Enter GitHub username: " username
@@ -144,28 +110,11 @@ else
     success "Found ${#lists[@]} lists: ${lists[*]}"
 fi
 
+info "Fetching ALL stars (Takes some time if a lot of stars)"
+gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
+success "Found $(wc -l < "$all_stars_file") total stars."
 
-if [[ $option == 1 ]]; then
-    echo "Please select lists to query (enter numbers separated by spaces, or 'all' for all lists):"
-    # Display available lists
-    for i in "${!lists[@]}"; do
-        echo "$((i + 1)). ${lists[$i]}"
-    done
-
-    # Get selections
-    selected=$(select_multiple_lists)
-    if [[ $? -eq 0 ]]; then
-        read -ra selected_lists <<< "$selected"
-        echo "You selected: ${selected_lists[*]}"
-    fi
-elif [[ $option == 2 ]]; then
-    info "Fetching ALL stars (Takes some time if a lot of stars)"
-    gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
-    success "Found $(wc -l < "$all_stars_file") total stars."
-    selected_lists=("${lists[@]}")
-fi
-
-for list_name in "${selected_lists[@]}"; do
+for list_name in "${lists[@]}"; do
     page=1
     info "\nScraping list [$list_name]"
     while true; do
@@ -190,43 +139,38 @@ for list_name in "${selected_lists[@]}"; do
 done
 
 
-if [[ $option == 1 ]]; then
-    if [[ -s "$in_lists_file" ]]; then
-        declare -A seen_lists
-        declare -a list_order
+if [[ -s "$in_lists_file" ]]; then
+    declare -A seen_lists
+    declare -a list_order
 
-        while IFS=':::' read -r list_name repo; do
-            if [[ -z "${seen_lists[$list_name]}" ]]; then
-                list_order+=("$list_name")
-                seen_lists[$list_name]=1
-            fi
-        done < "$in_lists_file"
+    while IFS=':::' read -r list_name repo; do
+        if [[ -z "${seen_lists[$list_name]}" ]]; then
+            list_order+=("$list_name")
+            seen_lists[$list_name]=1
+        fi
+    done < "$in_lists_file"
 
-        # Output grouped by list
-        for list_name in "${list_order[@]}"; do
-            info "\n[$list_name]"
-            grep "^${list_name}:::" "$in_lists_file" | cut -d':' -f4- | sed 's|^|https://github.com/|'
-        done
-    else
-        echo "No repositories found in selected lists."
-    fi
+    # Output grouped by list
+    for list_name in "${list_order[@]}"; do
+        info "\n[$list_name]"
+        grep "^${list_name}:::" "$in_lists_file" | cut -d':' -f4- | sed 's|^|https://github.com/|'
+    done
+else
+    echo "No repositories found in selected lists."
 fi
 
-if [[ $option == 2 ]]; then
-    sort -u "$all_stars_file" -o "$all_stars_file"
-    cut -d':' -f4- "$in_lists_file" | sort -u -o "$in_lists_file"
+sort -u "$all_stars_file" -o "$all_stars_file"
+cut -d':' -f4- "$in_lists_file" | sort -u -o "$in_lists_file"
 
-    echo "----------------------------------"
-    echo "REPOS STARRED BUT NOT IN ANY LIST:"
-    echo "----------------------------------"
+info "\n----------------------------------"
+info "REPOS STARRED BUT NOT IN ANY LIST:"
+info "----------------------------------"
 
-    # Show items in 'all_stars' that are NOT in 'in_lists'
-    results=$(comm -23 "$all_stars_file" "$in_lists_file" | sed 's|^|https://github.com/|')
+# Show items in 'all_stars' that are NOT in 'in_lists'
+results=$(comm -23 "$all_stars_file" "$in_lists_file" | sed 's|^|https://github.com/|')
 
-    if [[ -z "$results" ]]; then
-        echo "Everything is organized! No unlisted stars found."
-    else
-        echo "$results"
-    fi
+if [[ -z "$results" ]]; then
+    info "Everything is organized! No unlisted stars found."
+else
+    echo "$results"
 fi
-
