@@ -2,21 +2,14 @@
 
 all_stars_file=$(mktemp)
 in_lists_file=$(mktemp)
-COOKIE_FILE="cookie.txt"
+readonly COOKIE_FILE="cookie.txt"
 
 trap 'rm "$all_stars_file" "$in_lists_file"' EXIT
 
-error() {
-    echo -e "\033[31m$1\033[0m"
-}
-
-success() {
-    echo -e "\033[32m$1\033[0m"
-}
-
-info() {
-    echo -e "\033[34m$1\033[0m"
-}
+error() { echo -e "\033[31m$1\033[0m"; }
+info() { echo -e "\033[34m$1\033[0m"; }
+success() { echo -e "\033[32m$1\033[0m"; }
+warn() { echo -e "\033[33m$1\033[0m"; }
 
 select_multiple_lists() {
     local selected=()
@@ -43,6 +36,42 @@ select_multiple_lists() {
     fi
 
     echo "${selected[@]}"
+}
+
+# Ask for cookie
+prompt_for_cookie() {
+    echo "Check README for cookie instructions."
+    read -p "Please paste your full GitHub 'Cookie' header string here: " cookie
+
+    if [[ -z "$cookie" ]]; then
+        error "Error: No cookie string entered. Exiting."
+        exit 1
+    fi
+
+    echo "Cookie: $cookie" > "$COOKIE_FILE"
+    chmod 600 "$COOKIE_FILE"
+    success "Cookie saved."
+}
+
+# Test to see if cookie is expired or not
+validate_cookie() {
+    local test_url="https://github.com/settings/profile"
+    local response
+
+    if [[ ! -s "$COOKIE_FILE" ]]; then
+        return 1 # No cookie file
+    fi
+
+    body=$(curl -sL -A "Mozilla/5.0" -H @"$COOKIE_FILE" $test_url)
+
+    # Check for signs of authentication failure
+    if [[ "$body" =~ "Sign in to GitHub" ]] || \
+       [[ "$body" =~ "login?return_to" ]] || \
+       [[ "$body" =~ "class=\"auth-form-body\"" ]]; then
+        return 1  # Cookie expired/invalid
+    fi
+
+    return 0  # Cookie is valid
 }
 
 extract_from_html() {
@@ -81,28 +110,30 @@ fi
 
 # Get cookie
 if [[ $private_option == "y" ]]; then
-    if [[ -s "cookie.txt" ]]; then
+    if [[ -s "$COOKIE_FILE" ]]; then
         info "Existing 'cookie.txt' found. Reading cookie from file."
-    else
-        echo "Check README for cookie instructions."
-        read -p "Please paste your full GitHub 'Cookie' header string here: " cookie
-
-        if [[ -z "$cookie" ]]; then
-            error "Error: No cookie string entered. Exiting."
-            exit 1
+        if ! validate_cookie; then
+            warn "Cookie appears expired or invalid."
+            read -p "Do you want to enter a new cookie? (y/n): " refresh
+            if [[ "$refresh" == "y" ]]; then
+                rm -f "$COOKIE_FILE"
+                prompt_for_cookie
+            else
+                error "Cannot proceed without valid cookie. Exiting."
+                exit 1
+            fi
+        else
+            success "Cookie validated successfully."
         fi
-
-        echo "Cookie: $cookie" > cookie.txt
-        chmod 600 cookie.txt # Set secure permissions (only owner can read/write)
-
-        success "Cookie saved."
+    else
+        prompt_for_cookie
     fi
 fi
 
 
 info "Finding your GitHub Lists"
 if [[ $private_option == "y" ]]; then
-    list_links=$(curl -sL -A "Mozilla/5.0" -H @cookie.txt "https://github.com/$username?tab=stars" | grep "$username/lists/")
+    list_links=$(curl -sL -A "Mozilla/5.0" -H @"$COOKIE_FILE" "https://github.com/$username?tab=stars" | grep "$username/lists/")
 else
     list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "$username/lists/")
 fi
@@ -141,7 +172,7 @@ for list_name in "${selected_lists[@]}"; do
         echo -ne "page $page\r"
         url="https://github.com/stars/$username/lists/$list_name?page=$page"
         if [[ $private_option == "y" ]]; then
-            content=$(curl -sL -A "Mozilla/5.0" -H @cookie.txt "$url")
+            content=$(curl -sL -A "Mozilla/5.0" -H @"$COOKIE_FILE" "$url")
         elif [[ $private_option == "n" ]]; then
             content=$(curl -sL -A "Mozilla/5.0" "$url")
         fi
