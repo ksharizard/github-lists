@@ -11,15 +11,15 @@ success() { echo -e "\033[32m$1\033[0m"; }
 warn() { echo -e "\033[33m$1\033[0m"; }
 
 # Check for gh
-if ! command -v gh &> /dev/null; then
+if ! command -v gh &>/dev/null; then
     error "Error: 'gh' is not installed."
     exit 1
 fi
 
-# Get username
-read -p "Enter GitHub username: " username
-if [[ -z "$username" ]]; then
-    error "Username cannot be empty."
+# Check if gh is authenticated and can reach the GitHub API
+if ! gh auth status &>/dev/null; then
+    error "Error: 'gh' is not authenticated or cannot reach the GitHub API."
+    info "Please run 'gh auth login' to set up your credentials."
     exit 1
 fi
 
