@@ -2,7 +2,6 @@
 
 all_stars_file=$(mktemp)
 in_lists_file=$(mktemp)
-readonly COOKIE_FILE="cookie.txt"
 
 trap 'rm "$all_stars_file" "$in_lists_file"' EXIT
 
@@ -11,54 +10,11 @@ info() { echo -e "\033[34m$1\033[0m"; }
 success() { echo -e "\033[32m$1\033[0m"; }
 warn() { echo -e "\033[33m$1\033[0m"; }
 
-# Ask for cookie
-prompt_for_cookie() {
-    echo "Check README for cookie instructions."
-    read -p "Please paste your full GitHub 'Cookie' header string here: " cookie
-
-    if [[ -z "$cookie" ]]; then
-        error "Error: No cookie string entered. Exiting."
-        exit 1
-    fi
-
-    echo "Cookie: $cookie" > "$COOKIE_FILE"
-    chmod 600 "$COOKIE_FILE"
-    success "Cookie saved."
-}
-
-# Test to see if cookie is expired or not
-validate_cookie() {
-    local test_url="https://github.com/settings/profile"
-    local response
-
-    if [[ ! -s "$COOKIE_FILE" ]]; then
-        return 1 # No cookie file
-    fi
-
-    body=$(curl -sL -A "Mozilla/5.0" -H @"$COOKIE_FILE" $test_url)
-
-    # Check for signs of authentication failure
-    if [[ "$body" =~ "Sign in to GitHub" ]] || \
-       [[ "$body" =~ "login?return_to" ]] || \
-       [[ "$body" =~ "class=\"auth-form-body\"" ]]; then
-        return 1  # Cookie expired/invalid
-    fi
-
-    return 0  # Cookie is valid
-}
-
-extract_from_html() {
-    grep -oP 'href="/[^/"]+/[^/"]+"' | \
-    sed 's/href="\///;s/"//' | \
-    grep -vE "^(stars|site|settings|orgs|contact|about|customer-stories|topics|collections|trending|events|marketplace|pricing|exploring|features|security|login|join|notifications|search|dashboard|projects|pulls|issues|sponsors|sessions)/"
-}
-
 # Check for gh
 if ! command -v gh &> /dev/null; then
     error "Error: 'gh' is not installed."
     exit 1
 fi
-
 
 # Get username
 read -p "Enter GitHub username: " username
@@ -67,77 +23,28 @@ if [[ -z "$username" ]]; then
     exit 1
 fi
 
-# Get private lists option
-read -p "Do you want to fetch private lists? (y/n): " private_option
-if [[ ! $private_option =~ ^[yn]$ ]]; then
-    error "Please answer 'y' or 'n'."
-    exit 1
-fi
-
-# Get cookie
-if [[ $private_option == "y" ]]; then
-    if [[ -s "$COOKIE_FILE" ]]; then
-        info "Existing 'cookie.txt' found. Reading cookie from file."
-        if ! validate_cookie; then
-            warn "Cookie appears expired or invalid."
-            read -p "Do you want to enter a new cookie? (y/n): " refresh
-            if [[ "$refresh" == "y" ]]; then
-                rm -f "$COOKIE_FILE"
-                prompt_for_cookie
-            else
-                error "Cannot proceed without valid cookie. Exiting."
-                exit 1
-            fi
-        else
-            success "Cookie validated successfully."
-        fi
-    else
-        prompt_for_cookie
-    fi
-fi
-
-
-info "Finding your GitHub Lists"
-if [[ $private_option == "y" ]]; then
-    list_links=$(curl -sL -A "Mozilla/5.0" -H @"$COOKIE_FILE" "https://github.com/$username?tab=stars" | grep "$username/lists/")
-else
-    list_links=$(curl -sL -A "Mozilla/5.0" "https://github.com/$username?tab=stars" | grep "$username/lists/")
-fi
-mapfile -t lists < <(echo "$list_links" | awk -F'[/"]' '{print $(NF-1)}' | sort -u)
-if [ ${#lists[@]} -eq 0 ]; then
-    error "No lists found."
-else
-    success "Found ${#lists[@]} lists: ${lists[*]}"
-fi
-
 info "Fetching ALL stars (Takes some time if a lot of stars)"
 gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
 success "Found $(wc -l < "$all_stars_file") total stars."
 
-for list_name in "${lists[@]}"; do
-    page=1
-    info "\nScraping list [$list_name]"
-    while true; do
-        echo -ne "page $page\r"
-        url="https://github.com/stars/$username/lists/$list_name?page=$page"
-        if [[ $private_option == "y" ]]; then
-            content=$(curl -sL -A "Mozilla/5.0" -H @"$COOKIE_FILE" "$url")
-        elif [[ $private_option == "n" ]]; then
-            content=$(curl -sL -A "Mozilla/5.0" "$url")
-        fi
-        repos=$(echo "$content" | extract_from_html)
-
-        if [[ -z "$repos" ]]; then break; fi
-
-        echo "$repos" | while read -r repo; do
-            [[ -n "$repo" ]] && echo "${list_name}:::${repo}"
-        done >> "$in_lists_file"
-
-        ((page++))
-        sleep 1
-    done
-done
-
+info "Finding stars in GitHub Lists"
+lists=$(gh api graphql -F "login=${username}" -f query='query($login: String!) {
+  user(login: $login) {
+    lists {
+      nodes {
+        name
+        items {
+          nodes {
+            ... on Repository {
+              nameWithOwner
+            }
+          }
+        }
+      }
+    }
+  }
+}')
+echo "$lists" | jq -r '.data.user.lists.nodes[] | "\(.name):::\(.items.nodes[].nameWithOwner)"' > "$in_lists_file"
 
 if [[ -s "$in_lists_file" ]]; then
     declare -A seen_lists
