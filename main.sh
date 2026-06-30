@@ -24,57 +24,49 @@ if [[ -z "$username" ]]; then
 fi
 
 info "Fetching ALL stars (Takes some time if a lot of stars)"
-gh api /user/starred --paginate --jq '.[].full_name' >> $all_stars_file
-success "Found $(wc -l < "$all_stars_file") total stars."
+gh api /user/starred --paginate --jq '.[].html_url' >>$all_stars_file
+success "Found $(wc -l <"$all_stars_file") total stars."
 
 info "Finding stars in GitHub Lists"
-lists=$(gh api graphql -F "login=${username}" -f query='query($login: String!) {
-  user(login: $login) {
-    lists {
-      nodes {
-        name
-        items {
-          nodes {
-            ... on Repository {
-              nameWithOwner
+lists=$(gh api graphql -f query='{
+    viewer {
+        lists(first: 100) {
+            nodes {
+                name
+                items(first: 100) {
+                    nodes {
+                        ... on Repository {
+                            url
+                        }
+                    }
+                }
             }
-          }
         }
-      }
     }
-  }
 }')
-echo "$lists" | jq -r '.data.user.lists.nodes[] | "\(.name):::\(.items.nodes[].nameWithOwner)"' > "$in_lists_file"
+echo "$lists" | jq -r '.data.viewer.lists.nodes[] | "\(.name):::\(.items.nodes[].url)"' >"$in_lists_file"
 
 if [[ -s "$in_lists_file" ]]; then
-    declare -A seen_lists
-    declare -a list_order
-
-    while IFS=':::' read -r list_name repo; do
-        if [[ -z "${seen_lists[$list_name]}" ]]; then
-            list_order+=("$list_name")
-            seen_lists[$list_name]=1
-        fi
-    done < "$in_lists_file"
-
-    # Output grouped by list
-    for list_name in "${list_order[@]}"; do
+    # Extract unique list names in their original order
+    awk -F':::' '!seen[$1]++ {print $1}' "$in_lists_file" | while IFS= read -r list_name; do
         info "\n[$list_name]"
-        grep "^${list_name}:::" "$in_lists_file" | cut -d':' -f4- | sed 's|^|https://github.com/|'
+        # Filter and format repos for the current list
+        awk -F':::' -v list="$list_name" '$1 == list {print $2}' "$in_lists_file"
     done
 else
     echo "No repositories found in selected lists."
 fi
 
-sort -u "$all_stars_file" -o "$all_stars_file"
-cut -d':' -f4- "$in_lists_file" | sort -u -o "$in_lists_file"
-
 info "\n----------------------------------"
 info "REPOS STARRED BUT NOT IN ANY LIST:"
 info "----------------------------------"
 
+# Sort and deduplicate the files
+sort -u "$all_stars_file" -o "$all_stars_file"
+awk -F':::' '{print $2}' "$in_lists_file" | sort -u -o "$in_lists_file"
+
 # Show items in 'all_stars' that are NOT in 'in_lists'
-results=$(comm -23 "$all_stars_file" "$in_lists_file" | sed 's|^|https://github.com/|')
+results=$(comm -23 "$all_stars_file" "$in_lists_file")
 
 if [[ -z "$results" ]]; then
     info "Everything is organized! No unlisted stars found."
